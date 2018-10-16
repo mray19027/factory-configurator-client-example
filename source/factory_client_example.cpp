@@ -34,6 +34,10 @@
 #include "fcc_stats.h"
 #include "fcc_bundle_handler.h"
 
+#include "mbed.h"
+
+DigitalIn  mypin(SW2); // change this to the button on your board
+
 #define TRACE_GROUP     "fce"  // Maximum 4 characters
 
 static int factory_example_success = EXIT_FAILURE;
@@ -88,12 +92,13 @@ static void factory_flow_task()
 
     mbed_tracef(TRACE_LEVEL_CMD, TRACE_GROUP, "Factory flow begins...");
 
- 
-	fcc_status = fcc_storage_delete();
-	if (fcc_status != FCC_STATUS_SUCCESS) {
-		tr_error("Failed to reset storage\n");
-		goto out2;
-	}
+    if (!mypin) { 
+    	fcc_status = fcc_storage_delete();
+    	if (fcc_status != FCC_STATUS_SUCCESS) {
+    		tr_error("Failed to reset storage\n");
+    		goto out2;
+    	}
+    }
 
     while (true) {
         // wait for message from communication layer
