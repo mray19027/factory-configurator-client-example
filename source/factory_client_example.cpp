@@ -34,13 +34,151 @@
 #include "fcc_stats.h"
 #include "fcc_bundle_handler.h"
 
+#include <key_config_manager.h>
+#include <mbedtls/sha256.h>
+#include "mbed-cloud-client/MbedCloudClient.h"
+
 #include "mbed.h"
 
-DigitalIn  mypin(SW2); // change this to the button on your board
+DigitalIn  reset_pin(SW2); // change this to the button on your board
+DigitalIn  debug_pin(SW3); // change this to the button on your board
 
 #define TRACE_GROUP     "fce"  // Maximum 4 characters
 
 static int factory_example_success = EXIT_FAILURE;
+
+
+static void print_sha256(uint8_t *sha)
+{
+    for (size_t i = 0; i < 32; ++i) {
+        printf("%02x", sha[i]);
+    }
+}
+
+static void print_hex(uint8_t *buf, size_t len)
+{
+    for (size_t i = 0; i < len;) {
+        printf("%02x ", buf[i]);
+        if (++i % 16 == 0)
+            printf("\n");
+    }
+}
+
+static void print_fcc()
+{
+    uint8_t *buf;
+    size_t real_size = 0;
+    const size_t buf_size = 2048;
+    uint8_t sha[32]; /* SHA256 outputs 32 bytes */
+
+    buf = (uint8_t *)malloc(buf_size);
+    if (buf == NULL) {
+        printf("ERROR: failed to allocate tmp buffer\n");
+        return;
+    }
+
+#define PRINT_CONFIG_ITEM(x)                                                   \
+    do {                                                                       \
+        memset(buf, 0, buf_size);                                              \
+        kcm_status_e kcm_status =                                              \
+            kcm_item_get_data((const uint8_t *)x, strlen(x), KCM_CONFIG_ITEM,  \
+                              buf, buf_size, &real_size);                      \
+        if (kcm_status == 0) {                                                 \
+            printf("%s: %s\n", x, buf);                                        \
+        } else {                                                               \
+            printf("%s: FAIL (%d)\n", x, kcm_status);                          \
+        }                                                                      \
+    } while (false);
+
+#define PRINT_CONFIG_CERT(x)                                                   \
+    do {                                                                       \
+        memset(buf, 0, buf_size);                                              \
+        kcm_status_e kcm_status = kcm_item_get_data(                           \
+            (const uint8_t *)x, strlen(x), KCM_CERTIFICATE_ITEM, buf,          \
+            buf_size, &real_size);                                             \
+        if (kcm_status == 0) {                                                 \
+            printf("%s: \n", x);                                               \
+            printf("sha=");                                                    \
+            mbedtls_sha256(buf, std::min(real_size, buf_size), sha, 0);        \
+            print_sha256(sha);                                                 \
+            printf("\n");                                                      \
+            print_hex(buf, std::min(real_size, buf_size));                     \
+            printf("\n");                                                      \
+        } else {                                                               \
+            printf("%s: FAIL (%d)\n", x, kcm_status);                          \
+        }                                                                      \
+    } while (false)
+
+#define PRINT_CONFIG_KEY(x)                                                    \
+    do {                                                                       \
+        memset(buf, 0, buf_size);                                              \
+        kcm_status_e kcm_status = kcm_item_get_data(                           \
+            (const uint8_t *)x, strlen(x), KCM_PRIVATE_KEY_ITEM, buf,          \
+            buf_size, &real_size);                                             \
+        if (kcm_status == 0) {                                                 \
+            printf("%s: \n", x);                                               \
+            printf("sha=");                                                    \
+            mbedtls_sha256(buf, std::min(real_size, buf_size), sha, 0);        \
+            print_sha256(sha);                                                 \
+            printf("\n");                                                      \
+            print_hex(buf, std::min(real_size, buf_size));                     \
+            printf("\n");                                                      \
+        } else {                                                               \
+            printf("%s: FAIL (%d)\n", x, kcm_status);                          \
+        }                                                                      \
+    } while (false)
+
+    /**
+     * Device general info
+     */
+    PRINT_CONFIG_ITEM(g_fcc_use_bootstrap_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_endpoint_parameter_name);
+    PRINT_CONFIG_ITEM(KEY_INTERNAL_ENDPOINT); /*"mbed.InternalEndpoint"*/
+    PRINT_CONFIG_ITEM(KEY_ACCOUNT_ID);        /* "mbed.AccountID" */
+
+    /**
+     * Device meta data
+     */
+    PRINT_CONFIG_ITEM(g_fcc_manufacturer_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_model_number_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_device_type_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_hardware_version_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_memory_size_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_device_serial_number_parameter_name);
+    PRINT_CONFIG_ITEM(KEY_DEVICE_SOFTWAREVERSION); /* "mbed.SoftwareVersion" */
+
+    /**
+     * Time Synchronization
+     */
+    PRINT_CONFIG_ITEM(g_fcc_current_time_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_device_time_zone_parameter_name);
+    PRINT_CONFIG_ITEM(g_fcc_offset_from_utc_parameter_name);
+
+    /**
+     * Bootstrap configuration
+     */
+    PRINT_CONFIG_CERT(g_fcc_bootstrap_server_ca_certificate_name);
+    PRINT_CONFIG_ITEM(g_fcc_bootstrap_server_crl_name);
+    PRINT_CONFIG_ITEM(g_fcc_bootstrap_server_uri_name);
+    PRINT_CONFIG_CERT(g_fcc_bootstrap_device_certificate_name);
+    PRINT_CONFIG_CERT(g_fcc_bootstrap_device_private_key_name);
+
+    /**
+     * LWm2m configuration
+     */
+    PRINT_CONFIG_CERT(g_fcc_lwm2m_server_ca_certificate_name);
+    PRINT_CONFIG_ITEM(g_fcc_lwm2m_server_crl_name);
+    PRINT_CONFIG_ITEM(g_fcc_lwm2m_server_uri_name);
+    PRINT_CONFIG_CERT(g_fcc_lwm2m_device_certificate_name);
+    PRINT_CONFIG_KEY(g_fcc_lwm2m_device_private_key_name);
+
+    /**
+     * Firmware update
+     */
+    PRINT_CONFIG_CERT(g_fcc_update_authentication_certificate_name);
+
+    free(buf);
+}
 
 /**
 * Device factory flow
@@ -92,12 +230,16 @@ static void factory_flow_task()
 
     mbed_tracef(TRACE_LEVEL_CMD, TRACE_GROUP, "Factory flow begins...");
 
-    if (!mypin) { 
+    if (!reset_pin) { 
     	fcc_status = fcc_storage_delete();
     	if (fcc_status != FCC_STATUS_SUCCESS) {
     		tr_error("Failed to reset storage\n");
     		goto out2;
     	}
+    }
+
+    if (!debug_pin) {
+        print_fcc();
     }
 
     while (true) {
